@@ -62,6 +62,7 @@ async fn main() {
     }
 
     println!("");
+    println!("Changes in neovim");
     out.sort();
     for v in out {
         println!("{} is open", v);
