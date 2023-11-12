@@ -1,99 +1,57 @@
-use std::{env, net::{IpAddr, TcpStream}, process, sync::mpsc::{Sender, channel}, thread, io::{self, Write}};
-use std::str::FromStr;
+use std::{net::{IpAddr, Ipv4Addr}, sync::mpsc::{Sender, channel}, io::{self, Write}};
+use tokio::{net::TcpStream, task};
+use bpaf::Bpaf;
 
 const MAX: u16 = 65535;
 
-struct Arguments{
-    flag: String,
-    ipaddr: IpAddr,
-    threads: u16    
+const FALLBACK_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+
+
+#[derive(Debug, Clone, Bpaf)]
+#[bpaf(options)]
+
+pub struct Arguments{
+    #[bpaf(long, short, fallback(FALLBACK_ADDR))]    
+    ipaddr: IpAddr, 
+    
+    #[bpaf(long("start"), short('s'), fallback(1u16),  guard(start_port_guard, "Must be greater than 0"))]
+    pub start_port: u16,
+
+    #[bpaf(long("end"), short('e'), fallback(MAX),  guard(end_port_guard, "Must be less than 65535"))]
+    pub end_port: u16,
 }
 
-impl Arguments{
-    fn new(args: &[String]) -> Result<Arguments, &'static str> {
-        if args.len() < 2 {
-            return Err("Not enough arguments");
-        } else if args.len() > 4 {
-            return Err("Too many arguements");
+fn start_port_guard(input: &u16) -> bool {
+    *input > 0
+}
+
+fn end_port_guard(input: &u16) -> bool {
+    *input <= MAX
+}
+
+async fn scan(tx: Sender<u16>, start_port: u16, addr: IpAddr) {
+    // Attempts Connects to the address and the given port.
+    match TcpStream::connect(format!("{}:{}", addr, start_port)).await {
+        // If the connection is successful, print out a . and then pass the port through the channel.
+        Ok(_) => {
+            print!(".");
+            io::stdout().flush().unwrap();
+            tx.send(start_port).unwrap();
         }
-
-        let f = args[1].clone();
-        if let Ok(ipaddr) = IpAddr::from_str(&f) {
-            return Ok(Arguments { flag: String::from(""), ipaddr, threads: 4 });            
-        } else {
-            let flag = args[1].clone();
-            if flag.contains("-h") || flag.contains("--help") && args.len() == 2 {
-                println!("This is supposed to be a help menu.");
-                return Err("Help");
-            } else if flag.contains("-h") || flag.contains("--help") {
-                return Err("Too many arguments");
-            } else if flag.contains("-j") {
-                let ipaddr = match IpAddr::from_str(&args[3]) {
-                    Ok(s) => s,
-                    Err(_) => return Err("Invalid IP Address, must be IPv4 or IPv6.") 
-                };
-                
-                let threads = match args[2].parse::<u16>() {
-                    Ok(s) => s,
-                    Err(_) => return Err("Invalid thread count.")                    
-                };
-
-                return Ok(Arguments {
-                    threads,
-                    flag,
-                    ipaddr,
-                });
-
-            } else {
-                return Err("Invalid Syntax");
-            }
-        }
+        // If the connection is unsuccessful, do nothing. Means port is not open.
+        Err(_) => {}
     }
 }
-
-fn scan(tx: Sender<u16>, start_port: u16, addr: IpAddr, num_threads: u16){
-    let mut port: u16 = start_port + 1;
-    loop {
-        match TcpStream::connect(format!("{}:{}", addr, start_port)){
-            Ok(_) => {
-                print!("_");
-                io::stdout().flush().unwrap();
-                tx.send(port).unwrap();
-            }
-            Err(_) => {}
-        }
-
-        if (MAX - port) <= num_threads {
-            break;
-        }
-
-        port += num_threads;
-    }
-}
-
-fn main() {
-    let args : Vec<String> = env::args().collect();
-    let program = args[0].clone();
-    let arguements = Arguments::new(&args).unwrap_or_else(
-        |err| {
-            if err.contains("Help"){ 
-                process::exit(0);
-            } else { 
-                eprintln!("{} problem parsing arguments: {}", program, err);
-                process::exit(0);
-            }
-    });
-
-    let addr = arguements.ipaddr;
-    let num_threads = arguements.threads;
+#[tokio::main]
+async fn main() {
+    let opts = arguments().run();
+    
     let (tx, rx) = channel();
 
-    for i in 0..num_threads {
+    for i in opts.start_port..opts.end_port {
         let tx = tx.clone();
-
-        thread::spawn(move || {
-            scan(tx, i, addr, num_threads);
-        });
+        
+        task::spawn(async move { scan(tx, i, opts.ipaddr).await });
     }
 
     let mut out = vec![];
