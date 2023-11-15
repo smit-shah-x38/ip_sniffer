@@ -1,23 +1,37 @@
-use std::{net::{IpAddr, Ipv4Addr}, sync::mpsc::{Sender, channel}, io::{self, Write}};
-use tokio::{net::TcpStream, task};
+use std::{
+    io::{self, Write},
+    net::{IpAddr, Ipv4Addr},
+    sync::mpsc::{channel, Sender},
+};
+
 use bpaf::Bpaf;
+use tokio::{net::TcpStream, task};
 
 const MAX: u16 = 65535;
 
 const FALLBACK_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 
-
 #[derive(Debug, Clone, Bpaf)]
 #[bpaf(options)]
 
-pub struct Arguments{
-    #[bpaf(long, short, fallback(FALLBACK_ADDR))]    
-    ipaddr: IpAddr, 
-    
-    #[bpaf(long("start"), short('s'), fallback(1u16),  guard(start_port_guard, "Must be greater than 0"))]
+pub struct Arguments {
+    #[bpaf(long, short, fallback(FALLBACK_ADDR))]
+    ipaddr: IpAddr,
+
+    #[bpaf(
+        long("start"),
+        short('s'),
+        fallback(1u16),
+        guard(start_port_guard, "Must be greater than 0")
+    )]
     pub start_port: u16,
 
-    #[bpaf(long("end"), short('e'), fallback(MAX),  guard(end_port_guard, "Must be less than 65535"))]
+    #[bpaf(
+        long("end"),
+        short('e'),
+        fallback(MAX),
+        guard(end_port_guard, "Must be less than 65535")
+    )]
     pub end_port: u16,
 }
 
@@ -45,12 +59,12 @@ async fn scan(tx: Sender<u16>, start_port: u16, addr: IpAddr) {
 #[tokio::main]
 async fn main() {
     let opts = arguments().run();
-    
+
     let (tx, rx) = channel();
 
     for i in opts.start_port..opts.end_port {
         let tx = tx.clone();
-        
+
         task::spawn(async move { scan(tx, i, opts.ipaddr).await });
     }
 
@@ -62,6 +76,7 @@ async fn main() {
     }
 
     println!("");
+    println!("No autocomplete yet.");
     println!("Changes, again in neovim");
     out.sort();
     for v in out {
